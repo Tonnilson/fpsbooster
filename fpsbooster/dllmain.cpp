@@ -1,6 +1,5 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include <pe/module.h>
-#include <fnv1a.h>
 #include <xorstr.hpp>
 #include "pluginsdk.h"
 #include "searchers.h"

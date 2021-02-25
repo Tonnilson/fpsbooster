@@ -30,10 +30,6 @@ static int hideAll = 0;
 static std::filesystem::path filterPath;
 static int PlayerZoneID = NULL;
 
-static bool isKeyDown(int key)
-{
-	return (GetAsyncKeyState(key) & (1 << 16));
-}
 
 const std::filesystem::path& documents_path()
 {
@@ -48,9 +44,8 @@ const std::filesystem::path& documents_path()
 	return path;
 }
 
-bool is_numeric(const std::string& string) {
-	return !string.empty() && std::find_if(string.begin(), string.end(), [](unsigned char c) { return !std::isdigit(c); }) == string.end();
-}
+#define IS_NUMERIC(string) (!string.empty() && std::find_if(string.begin(), string.end(), [](unsigned char c) { return !std::isdigit(c); }) == string.end())
+#define IS_KEY_DOWN(key) ((GetAsyncKeyState(key) & (1 << 16)))
 
 std::vector<int> uiElementIds = {
 	3450, // Chat
@@ -80,7 +75,7 @@ static void loadFilter() {
 		uiElementIds.clear();
 
 	while (std::getline(file, fileString)) {
-		if (!fileString.empty() && is_numeric(fileString))
+		if (!fileString.empty() && IS_NUMERIC(fileString))
 			uiElementIds.push_back(std::stoi(fileString));
 	}
 
@@ -101,11 +96,11 @@ static void HotKeyMonitor() {
 	static bool keyWasDown = false;
 	static bool keyDown = false;
 	while (true) {
-		if (isKeyDown(VK_MENU)) {
-			mainTextPressed = isKeyDown(0x31);
-			chatPressed = isKeyDown(0x33);
-			uiElementsPressed = isKeyDown(0x58);
-			reloadFilterList = isKeyDown(VK_INSERT);
+		if (IS_KEY_DOWN(VK_MENU)) {
+			mainTextPressed = IS_KEY_DOWN(0x31);
+			chatPressed = IS_KEY_DOWN(0x33);
+			uiElementsPressed = IS_KEY_DOWN(0x58);
+			reloadFilterList = IS_KEY_DOWN(VK_INSERT);
 
 			if (reloadFilterList) {
 				if (std::filesystem::exists(filterPath))

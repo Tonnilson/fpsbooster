@@ -30,7 +30,6 @@ static int hideAll = 0;
 static std::filesystem::path filterPath;
 static int PlayerZoneID = NULL;
 
-
 const std::filesystem::path& documents_path()
 {
 	static std::once_flag once_flag;
@@ -46,14 +45,15 @@ const std::filesystem::path& documents_path()
 
 #define IS_NUMERIC(string) (!string.empty() && std::find_if(string.begin(), string.end(), [](unsigned char c) { return !std::isdigit(c); }) == string.end())
 #define IS_KEY_DOWN(key) ((GetAsyncKeyState(key) & (1 << 16)))
+#define IN_RANGE(low, high, x) ((low <= x && x <= high))
 
 std::vector<int> uiElementIds = {
 	3450, // Chat
-	1282, // HM Level/ Char Name / Money
 	5507, //Active Buffs
-	1283, //Icons Big
-	1279, //Icons small,
-	1284, // XP Bar
+	1264, //icons small
+	1268, //Icons big
+	1267, //Name & Money
+	1269, //XP Bar
 	6139, //Quest ID
 	5514, //Auto Combat
 	6126, //Map
@@ -80,11 +80,6 @@ static void loadFilter() {
 	}
 
 	return;
-}
-
-bool inRange(unsigned low, unsigned high, unsigned x)
-{
-	return (low <= x && x <= high);
 }
 
 static void HotKeyMonitor() {
@@ -139,35 +134,40 @@ static void HotKeyMonitor() {
 
 					for (auto x : uiPointers) {
 						element = reinterpret_cast<UIElement*>(x);
+						//Check to make sure the pointer and ID is valid / not 0
 						if (element != nullptr && element->ID != NULL) {
-							auto idSearch = std::find(uiElementIds.begin(), uiElementIds.end(), element->ID);
-							if (idSearch != uiElementIds.end()) {
-								//This bit was about checking player zone and making sure to unhide the correct Quest ID
-								if (inRange(6400, 6405, PlayerZoneID) && element->ID == 6139)
-									SkipID = true;
-								else if (element->ID == 6222 && !inRange(6400, 6405, PlayerZoneID))
-									SkipID = true;
-								else
-									SkipID = false;
+							//Make sure visibility is between 2->3 (2 for visible | 3 for hidden)
+							if (IN_RANGE(2, 3, element->Visibility)) {
+								auto idSearch = std::find(uiElementIds.begin(), uiElementIds.end(), element->ID);
+								if (idSearch != uiElementIds.end()) {
+									//This bit was about checking player zone and making sure to unhide the correct Quest ID
+									if (IN_RANGE(6400, 6405, PlayerZoneID) && element->ID == 6139)
+										SkipID = true;
+									else if (element->ID == 6222 && !IN_RANGE(6400, 6405, PlayerZoneID))
+										SkipID = true;
+									else
+										SkipID = false;
 
-								if (!SkipID && element->Visibility != NULL)
-									element->Visibility = 2;
+									if (!SkipID && element->Visibility != NULL)
+										element->Visibility = 2;
+								}
 							}
 						}
 					}
-				}
-				else {
 					/*
 						Empty out the vector on each hide, why? Well when the player loads new zones
 						or switches characters etc the game reallocates chunks of the UI so things get
 						shifted around, we clear it just to make life easy and to keep the array from
-						building up with excessive junk elements. Could make it better and make a 
+						building up with excessive junk elements. Could make it better and make a
 						multi dimensional vector containing desired Element ID and pointer but
 						I stopped caring about blade and shit
 					*/
-					uiPointers.clear();
-					hideAll = 1;
+					if (!uiPointers.empty())
+						uiPointers.clear();
 				}
+				else
+					hideAll = 1;
+
 				std::this_thread::sleep_for(std::chrono::milliseconds(500)); //Delay by 500ms to prevent excessive execution
 			}
 		}
@@ -189,6 +189,16 @@ bool __fastcall hkWorldThread(__int64 localPVtable) {
 	return oWorldThread(localPVtable);
 }
 
+bool(__fastcall* oInitMainLobby)(__int64, unsigned int);
+bool __fastcall hkInitMainLobby(__int64 a1, unsigned int a2) {
+	if (!uiPointers.empty())
+		uiPointers.clear();
+
+	if (hideAll)
+		hideAll = 0;
+
+	return oInitMainLobby(a1, a2);
+}
 
 bool(__fastcall* oIsElementVisible)(__int64, __int64);
 bool __fastcall hkIsElementVisisble(__int64 uiElement, __int64 a2) {
@@ -250,11 +260,43 @@ void CheckAndHideUIElement(int uiElement) {
 }
 
 static uintptr_t oWorldData = 0;
+static uintptr_t oInitMainLobby = 0;
+
 __declspec(naked) void hkWorldData() {
 	__asm {
 		mov eax, [eax + 0x90]
 		mov[PlayerZoneID], eax
 		jmp[oWorldData]
+	}
+}
+
+__declspec(naked) void hkInitMainLobby() {
+	__asm {
+		push esp
+		push edx
+		push ebp
+		push eax
+		push ecx
+		push esp
+		push esi
+	}
+
+	if (!uiPointers.empty())
+		uiPointers.clear();
+
+	if (hideAll)
+		hideAll = 0;
+
+	__asm {
+		pop esi
+		pop esp
+		pop ecx
+		pop eax
+		pop ebp
+		pop edx
+		pop esp
+		cmp esi, [edi+0x588]
+		jmp [oInitMainLobby]
 	}
 }
 
@@ -364,7 +406,17 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			aWorldThread = (uintptr_t)&sWorldThread[0] - 0x6;
 			oWorldThread = module->rva_to<std::remove_pointer_t<decltype(oWorldThread)>>(aWorldThread - handle);
 			DetourAttach(&(PVOID&)oWorldThread, &hkWorldThread);
-			DetourTransactionCommit();
+		}
+
+		/*
+			Hook main lobby initialization
+			check / reset our uiPointer array and turn off hideAll
+		*/
+		auto sInitMainLobby = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 8B DA")));
+		if (sInitMainLobby != data.end()) {
+			uintptr_t aInitMainLobby = (uintptr_t)&sInitMainLobby[0];
+			oInitMainLobby = module->rva_to<std::remove_pointer_t<decltype(oInitMainLobby)>>(aInitMainLobby - handle);
+			DetourAttach(&(PVOID&)oInitMainLobby, &hkInitMainLobby);
 		}
 
 #else
@@ -411,6 +463,17 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			Detour32((char*)aWorldPointer, (char*)hkWorldData, 6);
 		}
 
+		/*
+			Do a trampoline jump on the Main Lobby loader
+			to check / reset our uiPointer array and turn off hideAll
+		*/
+		auto sInitMainLobby = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("57 8B F8 3B B7 88 05 00 00")));
+		if (sInitMainLobby != data.end()) {
+			uintptr_t aInitMainLobby = (uintptr_t)&sInitMainLobby[0] + 0x3;
+			//3B B7 88 05 00 00
+			oInitMainLobby = aInitMainLobby + 0x6;
+			Detour32((char*)aInitMainLobby, (char*)hkInitMainLobby, 6);
+		}
 
 		/*
 			Find the caller for saying X skill used and parse text
@@ -428,7 +491,7 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			//memset((void*)aCombatLog, 0x90, 5);
 		}
 #endif
-
+		DetourTransactionCommit();
 #ifdef _M_X64
 		if (const auto module = pe::get_module(L"bsengine_Shipping64.dll")) {
 #else

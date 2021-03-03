@@ -487,8 +487,6 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			uintptr_t aCombatLog = (uintptr_t)&sCombatLog[0] - 0x5C;
 			oParseCombatLog = module->rva_to<std::remove_pointer_t<decltype(oParseCombatLog)>>(aCombatLog - handle);
 			DetourAttach(&(PVOID&)oParseCombatLog, &hkParseCombatLog);
-			DetourTransactionCommit();
-			//memset((void*)aCombatLog, 0x90, 5);
 		}
 #endif
 		DetourTransactionCommit();

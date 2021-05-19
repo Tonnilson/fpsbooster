@@ -49,7 +49,7 @@ const std::filesystem::path& documents_path()
 
 std::vector<int> uiElementIds = {
 	3450, // Chat
-	5507, //Active Buffs
+	5531, //Active Buffs
 	1264, //icons small
 	1268, //Icons big
 	1267, //Name & Money
@@ -58,7 +58,7 @@ std::vector<int> uiElementIds = {
 	5514, //Auto Combat
 	6126, //Map
 	6222, //Basin specific
-	5496 //Party
+	5520 //Party
 };
 
 #ifdef _M_X64
@@ -264,7 +264,7 @@ static uintptr_t oInitMainLobby = 0;
 
 __declspec(naked) void hkWorldData() {
 	__asm {
-		mov eax, [eax + 0x90]
+		mov eax, [edx + 0x90]
 		mov[PlayerZoneID], eax
 		jmp[oWorldData]
 	}
@@ -295,7 +295,7 @@ __declspec(naked) void hkInitMainLobby() {
 		pop ebp
 		pop edx
 		pop esp
-		cmp esi, [edi+0x588]
+		cmp esi, [edi+0x580]
 		jmp [oInitMainLobby]
 	}
 }
@@ -391,6 +391,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			memcpy((LPVOID)parseCombatLogBytes, (LPVOID)parseCombatLog, sizeof(parseCombatLogBytes));
 			memcpy((LPVOID)parseCombatLog, parseCombatLogJmp, sizeof(parseCombatLogJmp));
 		}
+		else {
+			MessageBox(NULL, L"Could not find the function for combat log", L"CBL Search Error", MB_OK);
+		}
 
 		/*
 			Hook a thread to accurately retrieve the Character World Pointer
@@ -407,6 +410,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			oWorldThread = module->rva_to<std::remove_pointer_t<decltype(oWorldThread)>>(aWorldThread - handle);
 			DetourAttach(&(PVOID&)oWorldThread, &hkWorldThread);
 		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"World Pointer Error", MB_OK);
+		}
 
 		/*
 			Hook main lobby initialization
@@ -417,6 +423,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			uintptr_t aInitMainLobby = (uintptr_t)&sInitMainLobby[0];
 			oInitMainLobby = module->rva_to<std::remove_pointer_t<decltype(oInitMainLobby)>>(aInitMainLobby - handle);
 			DetourAttach(&(PVOID&)oInitMainLobby, &hkInitMainLobby);
+		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"Init Main Lobby Error", MB_OK);
 		}
 
 #else
@@ -433,6 +442,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			mainTextParser = (uintptr_t)&sMainText[0] + 0x14;
 			memcpy((LPVOID)mainTextParserBytes, (LPVOID)mainTextParser, 2);
 		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"Main Text Error", MB_OK);
+		}
 
 		/*
 			Find condition for saying parse text to chatbox
@@ -446,6 +458,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			mainChatNotification = (uintptr_t)&sChatNotif[0] + 0x8;
 			//*(BYTE*)mainChatNotification = 0xEB;
 		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"Chat Notify Error", MB_OK);
+		}
 
 		/*
 			Hook a thread to accurately retrieve the Character World Pointer
@@ -455,24 +470,30 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			Patch 169
 			Original pattern: 8B 89 2C 4B 00 00 8B 31 99 52 8B 56 64 50 FF D2 8B F0
 		*/
-		auto sWorldPointer = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("8B 89 2C 4B 00 00 8B 31 99 52 8B 56 64 50 FF D2 8B F0")));
+		auto sWorldPointer = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("8B 54 24 38 8B 82 90 00 00 00 50 E8")));
 		if (sWorldPointer != data.end()) {
-			aWorldPointer = (uintptr_t)&sWorldPointer[0] - 0xC;
+			aWorldPointer = (uintptr_t)&sWorldPointer[0] + 0x4;
 			//8B 80 90 00 00 00
 			oWorldData = aWorldPointer + 0x6;
 			Detour32((char*)aWorldPointer, (char*)hkWorldData, 6);
+		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"World Pointer Error", MB_OK);
 		}
 
 		/*
 			Do a trampoline jump on the Main Lobby loader
 			to check / reset our uiPointer array and turn off hideAll
 		*/
-		auto sInitMainLobby = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("57 8B F8 3B B7 88 05 00 00")));
+		auto sInitMainLobby = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("57 8B F8 3B B7 80 05 00 00")));
 		if (sInitMainLobby != data.end()) {
 			uintptr_t aInitMainLobby = (uintptr_t)&sInitMainLobby[0] + 0x3;
 			//3B B7 88 05 00 00
 			oInitMainLobby = aInitMainLobby + 0x6;
 			Detour32((char*)aInitMainLobby, (char*)hkInitMainLobby, 6);
+		}
+		else {
+			MessageBox(NULL, L"Failed to find a function resulting in some broken functionality just tag me", L"Init Main Lobby Error", MB_OK);
 		}
 
 		/*
@@ -487,6 +508,9 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 			uintptr_t aCombatLog = (uintptr_t)&sCombatLog[0] - 0x5C;
 			oParseCombatLog = module->rva_to<std::remove_pointer_t<decltype(oParseCombatLog)>>(aCombatLog - handle);
 			DetourAttach(&(PVOID&)oParseCombatLog, &hkParseCombatLog);
+		}
+		else {
+			MessageBox(NULL, L"Could not find the function for combat log", L"CBL Search Error", MB_OK);
 		}
 #endif
 		DetourTransactionCommit();

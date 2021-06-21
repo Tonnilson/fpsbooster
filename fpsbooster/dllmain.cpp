@@ -47,18 +47,22 @@ const std::filesystem::path& documents_path()
 #define IS_KEY_DOWN(key) ((GetAsyncKeyState(key) & (1 << 16)))
 #define IN_RANGE(low, high, x) ((low <= x && x <= high))
 
+#define LDR_DLL_NOTIFICATION_REASON_LOADED 1
+#define LDR_DLL_NOTIFICATION_REASON_UNLOADED 0
+typedef NTSTATUS(NTAPI* tLdrRegisterDllNotification)(ULONG, PVOID, PVOID, PVOID);
+
 std::vector<int> uiElementIds = {
 	3450, // Chat
-	5531, //Active Buffs
+	5539, //Active Buffs
 	1264, //icons small
 	1268, //Icons big
 	1267, //Name & Money
 	1269, //XP Bar
-	6139, //Quest ID
-	5514, //Auto Combat
-	6126, //Map
+	6153, //Quest ID
+	5547, //Auto Combat
+	6140, //Map
 	6222, //Basin specific
-	5520 //Party
+	5529 //Party
 };
 
 #ifdef _M_X64
@@ -330,6 +334,68 @@ __declspec(naked) void hkIsElementVisisble() {
 
 #endif
 
+static void BSEngine_Init() {
+#ifdef _M_X64
+	if (const auto module = pe::get_module(L"bsengine_Shipping64.dll")) {
+#else
+	if (const auto module = pe::get_module(L"bsengine_Shipping.dll")) {
+#endif
+		DetourTransactionBegin();
+		DetourUpdateThread(NtCurrentThread());
+
+		uintptr_t handle = module->handle();
+		const auto sections = module->segments();
+		const auto& s2 = std::find_if(sections.begin(), sections.end(), [](const IMAGE_SECTION_HEADER& x) {
+			return x.Characteristics & IMAGE_SCN_CNT_CODE;
+			});
+		const auto data = s2->as_bytes();
+
+		/*
+			The function we will be hooking to get all UI Elements
+			and hide them from the players screen.
+
+			This function is checking thousands of UI Elements per cycle
+			so take care in what you do in this function, It's not actually
+			checking visibility of the UI element, it does a lot more than that
+			but this is just a dumb down name.
+		*/
+#ifdef _M_X64
+		//40 53 48 83 EC 20 F6 81 84 00 00 00 01 48 8B D9
+		auto sElementVis = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("40 53 48 83 EC 20 F6 81 84 00 00 00 01 48 8B D9")));
+		uintptr_t aElementVis = NULL;
+		if (sElementVis != data.end()) {
+			aElementVis = (uintptr_t)&sElementVis[0];
+			oIsElementVisible = module->rva_to<std::remove_pointer_t<decltype(oIsElementVisible)>>(aElementVis - handle);
+			DetourAttach(&(PVOID&)oIsElementVisible, &hkIsElementVisisble);
+			DetourTransactionCommit();
+		}
+		else {
+			MessageBox(NULL, L"ElementVis Not Found", L"CBL Search Error", MB_OK);
+		}
+#else
+		auto sElementVis = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("8B 82 F8 02 00 00 8B CB FF D0 8B F0")));
+		uintptr_t aElementVis = NULL;
+		if (sElementVis != data.end()) {
+			aElementVis = (uintptr_t)&sElementVis[0];
+			oElementAddr = aElementVis + 0x6;
+			Detour32((char*)aElementVis, (char*)hkIsElementVisisble, 6);
+		}
+		else {
+			MessageBox(NULL, L"ElementVis Not Found", L"CBL Search Error", MB_OK);
+		}
+#endif
+	}
+}
+
+void NTAPI DllNotification(ULONG notification_reason, const LDR_DLL_NOTIFICATION_DATA* notification_data, PVOID context)
+{
+	if (notification_reason == LDR_DLL_NOTIFICATION_REASON_LOADED)
+		if (wcsncmp(notification_data->Loaded.BaseDllName->Buffer, L"bsengine", 8) == 0)
+			BSEngine_Init();
+
+	return;
+}
+
 void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 {
 	if (const auto module = pe::get_module()) {
@@ -514,56 +580,21 @@ void __cdecl oep_notify([[maybe_unused]] const version_t client_version)
 		}
 #endif
 		DetourTransactionCommit();
-#ifdef _M_X64
-		if (const auto module = pe::get_module(L"bsengine_Shipping64.dll")) {
-#else
-		if (const auto module = pe::get_module(L"bsengine_Shipping.dll")) {
-#endif
-			DetourTransactionBegin();
-			DetourUpdateThread(NtCurrentThread());
-
-			uintptr_t handle = module->handle();
-			const auto sections = module->segments();
-			const auto& s2 = std::find_if(sections.begin(), sections.end(), [](const IMAGE_SECTION_HEADER& x) {
-				return x.Characteristics & IMAGE_SCN_CNT_CODE;
-				});
-			const auto data = s2->as_bytes();
-
-			/*
-				The function we will be hooking to get all UI Elements
-				and hide them from the players screen.
-
-				This function is checking thousands of UI Elements per cycle
-				so take care in what you do in this function, It's not actually
-				checking visibility of the UI element, it does a lot more than that
-				but this is just a dumb down name.
-			*/
-#ifdef _M_X64
-			//40 53 48 83 EC 20 F6 81 84 00 00 00 01 48 8B D9
-			auto sElementVis = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("40 53 48 83 EC 20 F6 81 84 00 00 00 01 48 8B D9")));
-			uintptr_t aElementVis = NULL;
-			if (sElementVis != data.end()) {
-				aElementVis = (uintptr_t)&sElementVis[0];
-				oIsElementVisible = module->rva_to<std::remove_pointer_t<decltype(oIsElementVisible)>>(aElementVis - handle);
-				DetourAttach(&(PVOID&)oIsElementVisible, &hkIsElementVisisble);
-				DetourTransactionCommit();
-			}
-#else
-			auto sElementVis = std::search(data.begin(), data.end(), pattern_searcher(xorstr_("8B 82 F8 02 00 00 8B CB FF D0 8B F0")));
-			uintptr_t aElementVis = NULL;
-			if (sElementVis != data.end()) {
-				aElementVis = (uintptr_t)&sElementVis[0];
-				oElementAddr = aElementVis + 0x6;
-				Detour32((char*)aElementVis, (char*)hkIsElementVisisble, 6);
-			}
-#endif
-		}
 
 		//Create our hotkey thread and detach from current thread
 		std::thread t1(HotKeyMonitor);
 		t1.detach();
-		}
 	}
+}
+
+//This is lazy, there is a cleaner way to do this just can't be asked to dig through deps.
+void initCallbacks() {
+	static PVOID cookie;
+	if(tLdrRegisterDllNotification LdrRegisterDllNotification = reinterpret_cast<tLdrRegisterDllNotification>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "LdrRegisterDllNotification")))
+		LdrRegisterDllNotification(0, DllNotification, NULL, &cookie); //Set a callback for when Dll's are loaded/unloaded
+
+	return;
+}
 
 BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD fdwReason, LPVOID lpvReserved)
 {
@@ -589,6 +620,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD fdwReason, LPVOID lpvReserved)
 bool __cdecl init([[maybe_unused]] const version_t client_version)
 {
 	NtCurrentPeb()->BeingDebugged = FALSE;
+	initCallbacks();
 	return true;
 }
 
